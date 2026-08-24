@@ -1,0 +1,169 @@
+// HTTP Server in RUNE: vr1.4-grafite
+//
+// main.rn --
+// A tiny HTTP server: it parses the request line, takes the
+// path and sends back the bytes of that file. Anything
+// malformed, fishy ("..", "~") or missing gets an error.
+//
+// It serves "." -- run it from the directory you want to serve.
+//
+// Copyright (c) 2026 Pablo Trik Marin
+// License: GPL
+
+// !!!There will be no structs before 2.0!!!
+//
+// struct sockaddr_in {
+// 	short family, port;
+// 	int addr;
+// 	char zero[8];
+// };
+
+pub fn main {
+	// SETUP SERVER
+	let s_fd = socket(2, 1, 0)
+	printf("\tserver socket: %d\n", s_fd)
+
+	// struct sockaddr_in, built by hand, byte by byte
+	leb addr[16]
+	addr[0] = 2
+	addr[1] = 0
+	// port = 8080 = 0x1F90
+	addr[2] = 0x1F
+	addr[3] = 0x90
+	// addr = INADDR_ANY (0.0.0.0)
+	let i
+	for i = 4, i < 16, i++
+		addr[i] = 0
+
+	bind(s_fd, addr, 16)
+	listen(s_fd, 10)
+
+	printf("listening on:\n")
+	printf("\tport: %d\n", addr[2]<<8 | addr[3])
+	printf("\taddr: %d\n", addr[7]<<24 | addr[6]<<16 | addr[5]<<8 | addr[4])
+
+	// Multiple stacks inside a function are not supported yet.
+	let c_fd
+	leb buf[4096]	// raw request
+	leb res[512]	// response header
+	leb fbuf[4096]	// file chunks
+	leb real[4096]	// realpath of the requested path
+	leb cwd[2048]	// where we are serving from
+	let n
+	let id = 0
+	leb *p		// start of the path, inside buf
+	leb *q		// end of the path
+	leb *name	// path without leading slashes
+	leb *ct		// content type of the response
+	leb *e		// extension of the file
+	let fd
+	let size
+	let k
+	let r
+	let clen
+
+	getcwd(cwd, 2048)
+	clen = strlen(cwd)
+	printf("\troot: %s\n", cwd)
+
+	for ,, {
+		c_fd = accept(s_fd, 0, 0)
+
+		n = recv(c_fd, buf, 4095, 0)
+		if n < 0
+			n = 0
+		buf[n] = 0
+
+		// print the request as it came
+		printf("req:\n%s\n", buf)
+
+		//
+		// parse "METHOD /path?query HTTP/x" -> p points at
+		// the path, NUL terminated. anything malformed or
+		// fishy ("..", "~") gets a bad request.
+		//
+		let ok = 0
+
+		p = strchr(buf, ' ')
+		if p != 0 {
+			p++
+			q = strchr(p, ' ')
+			if q == 0
+				q = strstr(p, "\r\n")
+			if q == 0
+				q = strchr(p, '\n')
+			if q != 0 {
+				*(q) = 0
+				// cut query strings: /a.html?a=1 -> /a.html
+				q = strchr(p, '?')
+				if q != 0
+					*(q) = 0
+
+				if *(p) == '/' && strstr(p, "..") == 0 && strchr(p, '~') == 0
+					ok = 1
+			}
+		}
+
+		if ok {
+			// strip every leading '/', so it is always
+			// relative to "."
+			name = p
+			while *(name) == '/'
+				name++
+
+			//
+			// realpath() resolves symlinks and returns NULL
+			// when the file does not exist. serve only what
+			// lands inside cwd.
+			//
+			r = realpath(name, real)
+			if r != 0 && strstr(real, cwd) == real && *(real + clen) == '/' {
+				fd = open(real, 0) // O_RDONLY
+				if fd < 0 {
+					strcpy(res, "HTTP/1.0 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 10\r\nConnection: close\r\n\r\nnot found\n")
+					send(c_fd, res, strlen(res), 0)
+				} else {
+					size = lseek(fd, 0, 2) // SEEK_END
+					lseek(fd, 0, 0)        // back to start
+
+					// content type by extension
+					ct = "text/plain"
+					e = strrchr(name, '.')
+					if e != 0 {
+						if strcmp(e, ".html") == 0 || strcmp(e, ".htm") == 0
+							ct = "text/html"
+						else if strcmp(e, ".css") == 0
+							ct = "text/css"
+						else if strcmp(e, ".js") == 0
+							ct = "text/javascript"
+						else if strcmp(e, ".png") == 0
+							ct = "image/png"
+						else if strcmp(e, ".jpg") == 0 || strcmp(e, ".jpeg") == 0
+							ct = "image/jpeg"
+						else if strcmp(e, ".svg") == 0
+							ct = "image/svg+xml"
+					}
+
+					sprintf(res, "HTTP/1.0 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", ct, size)
+					send(c_fd, res, strlen(res), 0)
+
+					k = read(fd, fbuf, 4096)
+					while k > 0 {
+						send(c_fd, fbuf, k, 0)
+						k = read(fd, fbuf, 4096)
+					}
+					close(fd)
+				}
+			} else {
+				strcpy(res, "HTTP/1.0 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 10\r\nConnection: close\r\n\r\nnot found\n")
+				send(c_fd, res, strlen(res), 0)
+			}
+		} else {
+			strcpy(res, "HTTP/1.0 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 11\r\nConnection: close\r\n\r\nbad request\n")
+			send(c_fd, res, strlen(res), 0)
+		}
+
+		close(c_fd)
+		id++
+	}
+}
