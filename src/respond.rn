@@ -1,0 +1,82 @@
+// HTTP Server in RUNE: vr1.4-grafite
+//
+// respond.rn --
+// Everything that goes back to the client: canned error
+// responses, content type lookup by extension and file
+// streaming.
+//
+// Copyright (c) 2026 Pablo Trik Marin
+// License: GPL
+
+pub fn bad_request {
+	// arg[0] = client fd
+	leb res[512]
+
+	strcpy(res, "HTTP/1.0 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: 11\r\nConnection: close\r\n\r\nbad request\n")
+	send(arg[0], res, strlen(res), 0)
+}
+
+pub fn not_found {
+	// arg[0] = client fd
+	leb res[512]
+
+	strcpy(res, "HTTP/1.0 404 Not Found\r\nContent-Type: text/plain\r\nContent-Length: 10\r\nConnection: close\r\n\r\nnot found\n")
+	send(arg[0], res, strlen(res), 0)
+}
+
+pub fn mime {
+	// arg[0] = extension of the file, dot included
+	leb *ct		// content type of the response
+
+	ct = "text/plain"
+	if strcmp(arg[0], ".html") == 0 || strcmp(arg[0], ".htm") == 0
+		ct = "text/html"
+	else if strcmp(arg[0], ".css") == 0
+		ct = "text/css"
+	else if strcmp(arg[0], ".js") == 0
+		ct = "text/javascript"
+	else if strcmp(arg[0], ".png") == 0
+		ct = "image/png"
+	else if strcmp(arg[0], ".jpg") == 0 || strcmp(arg[0], ".jpeg") == 0
+		ct = "image/jpeg"
+	else if strcmp(arg[0], ".svg") == 0
+		ct = "image/svg+xml"
+
+	ret ct
+}
+
+pub fn send_file {
+	// arg[0] = client fd, arg[1] = path sans leading slashes,
+	// arg[2] = realpath of the requested file
+	leb res[512]	// response header
+	leb fbuf[4096]	// file chunks
+	leb *ct		// content type of the response
+	leb *e		// extension of the file
+	let fd
+	let size
+	let k
+
+	fd = open(arg[2], 0) // O_RDONLY
+	if fd < 0 {
+		not_found(arg[0])
+	} else {
+		size = lseek(fd, 0, 2) // SEEK_END
+		lseek(fd, 0, 0)        // back to start
+
+		// content type by extension
+		ct = "text/plain"
+		e = strrchr(arg[1], '.')
+		if e != 0
+			ct = mime(e)
+
+		sprintf(res, "HTTP/1.0 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", ct, size)
+		send(arg[0], res, strlen(res), 0)
+
+		k = read(fd, fbuf, 4096)
+		while k > 0 {
+			send(arg[0], fbuf, k, 0)
+			k = read(fd, fbuf, 4096)
+		}
+		close(fd)
+	}
+}

@@ -1,0 +1,43 @@
+// HTTP Server in RUNE: vr1.4-grafite
+//
+// handle.rn --
+// Per-request logic: parse the request line into a path, check
+// that it stays inside the serving root and dispatch the right
+// response.
+//
+// Copyright (c) 2026 Pablo Trik Marin
+// License: GPL
+
+pub fn handle {
+	// arg[0] = client fd, arg[1] = raw request buffer,
+	// arg[2] = cwd we are serving from
+	leb real[4096]	// realpath of the requested path
+	leb *p		// start of the path, inside buf
+	leb *name	// path without leading slashes
+	let clen	// length of cwd
+	let r
+
+	clen = strlen(arg[2])
+
+	p = parse_path(arg[1])
+	if p != 0 {
+		// strip every leading '/', so it is always
+		// relative to "."
+		name = p
+		while *(name) == '/'
+			name++
+
+		//
+		// realpath() resolves symlinks and returns NULL
+		// when the file does not exist. serve only what
+		// lands inside cwd.
+		//
+		r = realpath(name, real)
+		if r != 0 && strstr(real, arg[2]) == real && *(real + clen) == '/'
+			send_file(arg[0], name, real)
+		else
+			not_found(arg[0])
+	} else {
+		bad_request(arg[0])
+	}
+}

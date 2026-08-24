@@ -1,0 +1,43 @@
+// HTTP Server in RUNE: vr1.4-grafite
+//
+// parse.rn --
+// Request line parsing: "METHOD /path?query HTTP/x" -> pointer
+// to the path, NUL terminated, query cut off. Anything malformed
+// or fishy ("..", "~") yields a null pointer.
+//
+// Copyright (c) 2026 Pablo Trik Marin
+// License: GPL
+
+pub fn parse_path {
+	// arg[0] = raw request buffer, modified in place
+	leb *p		// start of the path, inside buf
+	leb *q		// end of the path
+	let ok = 0
+
+	p = strchr(arg[0], ' ')
+	if p != 0 {
+		p++
+		q = strchr(p, ' ')
+		if q == 0
+			q = strstr(p, "\r\n")
+		if q == 0
+			q = strchr(p, '\n')
+		if q != 0 {
+			*(q) = 0
+			// cut query strings: /a.html?a=1 -> /a.html
+			q = strchr(p, '?')
+			if q != 0
+				*(q) = 0
+
+			if *(p) == '/' && strstr(p, "..") == 0 && strchr(p, '~') == 0
+				ok = 1
+		}
+	}
+
+	// ret only leaves the value in eax, so keep a single
+	// exit point: null when anything was fishy.
+	if ok == 0
+		p = 0
+
+	ret p
+}
